@@ -5,6 +5,8 @@ __pycache__/
 
 # C extensions
 *.so
+*.d3set
+*.tif
 
 # Distribution / packaging
 .Python
@@ -169,3 +171,34 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+benchmarks_predictions_dend
+benchmarks_predictions_spine
+ipynb_checkpoints
+checkpoints
+inference_results
+inference_results_png
+model_checkpoints
+output
+predictions_dend
+predictions_spine
+predictions_spine_test
+predictions_dend_test
+probability_maps
+probability_maps_dend
+sampling_probabilities
+sampling_probabilities_spine
+saved_models
+test
+visualization_results
+wandb
+*.pth 
+*.tif
+*.d3set
+*.png 
+*.sh 
+*.mask
+benchmark_predictions_spine
+benchmark_predictions_dend
+*.out
+*.log
+*.err
