@@ -291,17 +291,17 @@ class HPUNet(nn.Module):
         f = self.encoder_head(x)
         f = self.encoder(f)
         
-        outs_spine,outs_dendrite, infodicts_spine,infodict_dendrite = [], [],[],[]
+        outs_spine,outs_dendrite, infodicts_spine,infodicts_dendrite = [], [],[],[]
 
         if y is None:  # Not Using Posterior Net
             for _ in range(times):
-                o_s, infodict_s = self.decoder(f)
-                o_s = self.decoder_head(o_s)
+                o_s, infodict_s = self.decoder_spine(f)
+                o_s = self.decoder_head_spine(o_s)
                 outs_spine.append(o_s)
                 infodicts_spine.append(infodict_s)
 
-                o_d, infodict_d = self.decoder(f)
-                o_d = self.decoder_head(o_d)
+                o_d, infodict_d = self.decoder_dendrite(f)
+                o_d = self.decoder_head_dendrite(o_d)
                 outs_dendrite.append(o_d)
                 infodicts_dendrite.append(infodict_d)
 
@@ -310,13 +310,13 @@ class HPUNet(nn.Module):
             l = self.posterior_encoder(l)
 
             for _ in range(times):
-                o_s, infodict_s = self.decoder(f, l, insert_from_postnet)
-                o_s = self.decoder_head(o_s)
+                o_s, infodict_s = self.decoder_spine(f, l, insert_from_postnet)
+                o_s = self.decoder_head_spine(o_s)
                 outs_spine.append(o_s)
                 infodicts_spine.append(infodict_s)
 
-                o_d, infodict_d = self.decoder(f, l, insert_from_postnet)
-                o_d = self.decoder_head(o_d)
+                o_d, infodict_d = self.decoder_dendrite(f, l, insert_from_postnet)
+                o_d = self.decoder_head_dendrite(o_d)
                 outs_dendrite.append(o_d)
                 infodicts_dendrite.append(infodict_d)
 

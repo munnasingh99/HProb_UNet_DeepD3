@@ -228,4 +228,4 @@ class DataGeneratorDataset(Dataset):
             # Return sample
             return return_stack.squeeze(), return_dendrites.squeeze(), return_spines.squeeze()
         else:
-            return return_stack, return_dendrites, return_spines
+            return return_stack, return_spines, return_dendrites

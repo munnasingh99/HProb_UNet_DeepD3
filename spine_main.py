@@ -12,7 +12,7 @@ from datagen import DataGeneratorDataset
 
 
 from model import *
-from train import *
+from spine_train import *
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -31,7 +31,7 @@ parser.add_argument("--random_seed", type=int, default=42, help="If provided, se
 #parser.add_argument("--val_file", help="Path to the Validation Set")
 #parser.add_argument("--val_size", type=int, help="Validation Set Size (If not provided, the whole examples in the validation set will be used)")
 parser.add_argument("--val_period", type=int, default=1023,help="# Steps Between Consecutive Validations")
-parser.add_argument("--val_bs", type=int, help="Validation Batch Size")
+#parser.add_argument("--val_bs", type=int, help="Validation Batch Size")
 
 parser.add_argument("--normalization", help="Normalization Type (None/standard/log_normal)")
 parser.add_argument("--train_data_path",default=r"dataset/DeepD3_Training.d3set", help="Path to the Training Data")
@@ -55,7 +55,7 @@ parser.add_argument("--latent_locks", type=int, nargs='+',default= [None,None,No
 
 # Loss
 
-parser.add_argument("--rec_type", help="Reconstruction Loss Type", default="bce")
+parser.add_argument("--rec_type", help="Reconstruction Loss Type", default="mse")
 parser.add_argument("--loss_type", default="ELBO", help="Loss Function Type (ELBO/GECO)")
 
 parser.add_argument("--beta", type=float, default=1.0, help="(If Using ELBO Loss) Beta Parameter")
@@ -73,8 +73,8 @@ parser.add_argument("--update_rate", type=float, default=0.01, help="(If Using G
 
 parser.add_argument("--epochs", type=int, help="<Required> Number of Epochs", default=30)
 parser.add_argument("--bs", type=int, help="<Required> Batch Size", default=32)
-parser.add_argument("--samples_per_epoch", type=int, default=32768, help="Number of Samples per Epoch")
-parser.add_argument("--val_samples", type=int, default=4096,help="Number of Samples in the Validation Set")
+parser.add_argument("--samples_per_epoch", type=int, default= 8192, help="Number of Samples per Epoch")
+parser.add_argument("--val_samples", type=int, default=1024,help="Number of Samples in the Validation Set")
 parser.add_argument("--num_workers", type=int, default=4, help="Number of Workers for Data Loading")
 parser.add_argument("--optimizer", default="adam", help="Optimizer")
 parser.add_argument("--wd", type=float, default=0.0, help="Weight Decay Parameter")
@@ -87,8 +87,9 @@ parser.add_argument("--scheduler_gamma", type=float, default=0.1, help="Learning
 
 parser.add_argument("--save_period", type=int, default=128, help="Number of Epochs Between Saving the Model")
 
-parser.add_argument("--output_dir", default="runs", help="Output Directory")
+parser.add_argument("--output_dir", default="runs_spine", help="Output Directory")
 parser.add_argument("--comment", default="", help="Comment to be Included in the Stamp")
+parser.add_argument("--hard_negative_mining",default=True, help="Hard Negative Mining")
 
 
 # Parse Arguments
@@ -177,13 +178,11 @@ train_loader = DataLoader(
     
 val_loader = DataLoader(
     val_dataset,
-    batch_size=args.val_bs,
+    batch_size=args.bs,
     shuffle=False,
     num_workers=args.num_workers,
     pin_memory=True
 )
-
-print(type(val_loader))
 
 # Load Data
 # train_data = prepare_data(args.train_file, size=args.train_size, normalization=args.normalization)[0]
@@ -215,9 +214,6 @@ model.to(device)
 ## Reconstruction Loss
 if args.rec_type.lower() == 'mse':
     reconstruction_loss = MSELossWrapper()
-
-if args.rec_type.lower() == 'bce':
-    reconstruction_loss = BCELossWrapper()
 
 else:
     print('Invalid reconstruction loss type, exiting...')
