@@ -30,8 +30,8 @@ parser.add_argument("--random_seed", type=int, default=42, help="If provided, se
 
 #parser.add_argument("--val_file", help="Path to the Validation Set")
 #parser.add_argument("--val_size", type=int, help="Validation Set Size (If not provided, the whole examples in the validation set will be used)")
-parser.add_argument("--val_period", type=int, default=1023,help="# Steps Between Consecutive Validations")
-parser.add_argument("--val_bs", type=int, help="Validation Batch Size")
+parser.add_argument("--val_period", type=int, default=10,help="# Steps Between Consecutive Validations")
+parser.add_argument("--val_bs", type=int, default=32, help="Validation Batch Size")
 
 parser.add_argument("--normalization", help="Normalization Type (None/standard/log_normal)")
 parser.add_argument("--train_data_path",default=r"dataset/DeepD3_Training.d3set", help="Path to the Training Data")
@@ -43,19 +43,19 @@ parser.add_argument("--image_size", type=int, default=128, help="Size of the Ima
 parser.add_argument("--in_ch", type=int, default=1, help="# Input Channels")
 parser.add_argument("--out_ch", type=int, default=1, help="# Output Channels")
 parser.add_argument("--intermediate_ch", type=int, nargs='+', help="<Required> Intermediate Channels", default=[32, 64, 128, 256])
-parser.add_argument("--kernel_size", type=int, nargs='+', default=[3], help="Kernel Size of the Convolutional Layers at Each Scale")
+parser.add_argument("--kernel_size", type=int, nargs='+', help="Kernel Size of the Convolutional Layers at Each Scale")
 parser.add_argument("--scale_depth", type=int, nargs='+', default=[1], help="Number of Residual Blocks at Each Scale")
 parser.add_argument("--dilation", type=int, nargs='+', default=[1], help="Dilation at Each Scale")
 parser.add_argument("--padding_mode", default='zeros', help="Padding Mode in the Decoder's Convolutional Layers")
 
 parser.add_argument("--latent_num", type=int, default=4, help="Number of Latent Scales (Setting to zero results in a deterministic U-Net)")
-parser.add_argument("--latent_chs", type=int, nargs='+', default=[1, 1, 1, 1], help="Number of Latent Channels at Each Latent Scale (Setting to None results in 1 channel per scale)")
+parser.add_argument("--latent_chs", type=int, nargs='+',  help="Number of Latent Channels at Each Latent Scale (Setting to None results in 1 channel per scale)")
 parser.add_argument("--latent_locks", type=int, nargs='+',default= [None,None,None,None],help="Whether Latent Space in Locked at Each Latent Scale (Setting to None makes all scales unlocked)")
 
 
 # Loss
 
-parser.add_argument("--rec_type", help="Reconstruction Loss Type", default="bce")
+parser.add_argument("--rec_type", help="Reconstruction Loss Type", default="mse")
 parser.add_argument("--loss_type", default="ELBO", help="Loss Function Type (ELBO/GECO)")
 
 parser.add_argument("--beta", type=float, default=1.0, help="(If Using ELBO Loss) Beta Parameter")
@@ -87,15 +87,66 @@ parser.add_argument("--scheduler_gamma", type=float, default=0.1, help="Learning
 
 parser.add_argument("--save_period", type=int, default=128, help="Number of Epochs Between Saving the Model")
 
-parser.add_argument("--output_dir", default="runs", help="Output Directory")
+parser.add_argument("--output_dir", default="dendrite", help="Output Directory")
 parser.add_argument("--comment", default="", help="Comment to be Included in the Stamp")
 
 
-# Parse Arguments
+# New argument for config file
+parser.add_argument("--config", type=str, help="Path to JSON config file")
+
+# Parse the initial arguments
 args = parser.parse_args()
 
+# If a config file is provided, load it and update args
+if args.config:
+    with open(args.config, "r") as f:
+        config_args = json.load(f)
+    # Update the argparse namespace with values from the config file
+    for key, value in config_args.items():
+        setattr(args, key, value)
 
-# Adjust Arguments
+
+
+train_dataset = DataGeneratorDataset(
+        fn=args.train_data_path,
+        samples_per_epoch=args.samples_per_epoch,
+        size=(1,args.image_size, args.image_size),
+        augment=True,
+        shuffle=True,
+    )
+    
+val_dataset = DataGeneratorDataset(
+    fn=args.val_data_path,
+    samples_per_epoch=args.val_samples,
+    size=(1,args.image_size, args.image_size),
+    augment=False,
+    shuffle=True,
+)
+
+print('Train dataset size:', len(train_dataset))
+print('Validation dataset size:', len(val_dataset))
+
+train_loader = DataLoader(
+    train_dataset,
+    batch_size=args.bs,
+    shuffle=True,
+    num_workers=args.num_workers,
+    pin_memory=True
+)
+    
+val_loader = DataLoader(
+    val_dataset,
+    batch_size=args.val_bs,
+    shuffle=False,
+    num_workers=args.num_workers,
+    pin_memory=True
+)
+
+s = next(iter(train_dataset))[0].shape[-1]
+args.size = s
+args.pixels = s*s
+
+
 if args.latent_locks is None:
     args.latent_locks = [0] * args.latent_num
 args.latent_locks = [bool(l) for l in args.latent_locks]
@@ -139,7 +190,7 @@ print("Device is {}".format(device))
 
 
 # Generate Stamp
-#stamp = 'My Lovely HPUnet'  # Assign a name manually
+# stamp = 'My Lovely HPUnet'  # Assign a name manually
 timestamp = datetime.datetime.now().strftime('%m%d-%H%M')  # Assign a timestamp
 compute_node = socket.gethostname()
 suffix = datetime.datetime.now().strftime('%f')
@@ -151,46 +202,14 @@ args.stamp = stamp
 
 # Initialize SummaryWriter (for tensorboard)
 writer = SummaryWriter('{}/{}/tb'.format(args.output_dir, stamp))
-train_dataset = DataGeneratorDataset(
-        fn=args.train_data_path,
-        samples_per_epoch=args.samples_per_epoch,
-        size=(1,args.image_size, args.image_size),
-        augment=True,
-        shuffle=True,
-    )
-    
-val_dataset = DataGeneratorDataset(
-    fn=args.val_data_path,
-    samples_per_epoch=args.val_samples,
-    size=(1,args.image_size, args.image_size),
-    augment=False,
-    shuffle=True,
-)
-    
-train_loader = DataLoader(
-    train_dataset,
-    batch_size=args.bs,
-    shuffle=True,
-    num_workers=args.num_workers,
-    pin_memory=True
-)
-    
-val_loader = DataLoader(
-    val_dataset,
-    batch_size=args.val_bs,
-    shuffle=False,
-    num_workers=args.num_workers,
-    pin_memory=True
-)
 
-print(type(val_loader))
 
-# Load Data
+# # Load Data
 # train_data = prepare_data(args.train_file, size=args.train_size, normalization=args.normalization)[0]
 # train_loader = DataLoader(train_data, batch_size=args.bs, shuffle=True)
-s = next(iter(train_dataset))[0].shape[-1]
-args.size = s
-args.pixels = s*s
+# s = next(iter(train_data))[0].shape[-1]
+# args.size = s
+# args.pixels = s*s
 
 # val_file, val_loader = args.val_file, None
 # if val_file is not None:
@@ -215,9 +234,6 @@ model.to(device)
 ## Reconstruction Loss
 if args.rec_type.lower() == 'mse':
     reconstruction_loss = MSELossWrapper()
-
-if args.rec_type.lower() == 'bce':
-    reconstruction_loss = BCELossWrapper()
 
 else:
     print('Invalid reconstruction loss type, exiting...')
@@ -281,7 +297,7 @@ with open('{}/{}/args.txt'.format(args.output_dir, stamp), 'w') as f:
 start = time.time()
 
 # Train the Model
-history = train_model(args, model, train_loader, criterion, optimizer, lr_scheduler, device, val_loader, start)
+history = train_model(args, model, train_loader, criterion, optimizer, lr_scheduler, writer, device, val_loader, start)
 
 
 # End Timing & Report Training Time

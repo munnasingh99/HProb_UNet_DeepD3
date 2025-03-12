@@ -1,36 +1,23 @@
 import time
 from random import randrange
-import csv
+import os
 import torch
 from torchvision.utils import make_grid
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-import os
+from torchvision.utils import save_image
 from model import *
-
-
-
 
 def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, writer, device='cpu', val_dataloader=None, start_time=None): 
     history = {
         'training_time(min)': None
     }
-    log_dir = f"{args.output_dir}/{args.stamp}/logs"
-    os.makedirs(log_dir, exist_ok=True)
-    train_log_file = open(f"{log_dir}/train_log.csv", 'w', newline='')
-    val_log_file = open(f"{log_dir}/val_log.csv", 'w', newline='')
-    
 
-    train_writer = csv.writer(train_log_file)
-    val_writer = csv.writer(val_log_file)
-    header = ['epoch', 'iteration', 'loss_per_pixel', 'reconstruction_per_pixel', 'kl_term_per_pixel']
-    header += [f'kl_scale_{i}_per_pixel' for i in range(args.latent_num)]
-    header += ['learning_rate']
-    
-    train_writer.writerow(header)
-    val_writer.writerow(header)
+    if val_dataloader is not None:
+        val_minibatches = len(val_dataloader)
 
-    def record_history(epoch,idx, loss_dict, type='train'):
+
+    def record_history(idx, loss_dict, type='train'):
         prefix = 'Minibatch Training ' if type == 'train' else 'Mean Validation '
 
         loss_per_pixel = loss_dict['loss'].item() / args.pixels
@@ -58,24 +45,23 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, wri
                 writer.add_scalar('Lagrange Multiplier', lamda, idx)
                 writer.add_scalar('Beta', 1/(lamda+1e-20), idx)
 
-        log_row = [e+1, idx, loss_per_pixel, reconstruction_per_pixel, kl_term_per_pixel]
-        log_row += kl_per_pixel
-        log_row += [lr_scheduler.get_last_lr()[0]]
-        
-        train_writer.writerow(log_row)
-        train_log_file.flush()
-
 
     val_images, val_truths = next(iter(val_dataloader))
     val_images, val_truths = val_images[:16], val_truths[0][:16]
     truth_grid = make_grid(val_truths, nrow=4, pad_value=val_truths.min().item())
+    image_grid = make_grid(val_images, nrow=4, pad_value=val_images.min().item())
     fig, ax = plt.subplots(figsize=(6,6))
     ax.imshow(truth_grid[0])
     ax.set_axis_off()
     fig.tight_layout()
     writer.add_figure('Validation Images / Ground Truth', fig)
     val_images_selection = val_images.to(device)
-    
+    val_truths_selection = val_truths.to(device)
+    save_dir = os.path.join(args.output_dir, args.stamp)
+    os.makedirs(save_dir, exist_ok=True)
+
+    save_image(truth_grid, os.path.join(save_dir, "val_truths_grid.png"))
+    save_image(image_grid, os.path.join(save_dir, "val_images_grid.png"))
     last_time_checkpoint = start_time
     for e in range(args.epochs):
         for mb, (images, truths) in enumerate(tqdm(dataloader)):
@@ -115,7 +101,7 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, wri
             loss_dict = criterion.last_loss.copy()
             loss_dict.update( { 'kls': infodict['kls'] } )
 
-            record_history(e, idx, loss_dict)
+            record_history(idx, loss_dict)
             
             
             # Validation
@@ -128,7 +114,7 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, wri
                     val_preds = model(val_images_selection)[0]
                     
                     out_grid = make_grid(val_preds, nrow=4, pad_value=val_preds.min().item())
-
+                    save_image(out_grid, os.path.join(save_dir, f"val_preds_grid_{idx}.png"))
                     fig, ax = plt.subplots(figsize=(6,6))
                     ax.imshow(out_grid[0].cpu())
                     ax.set_axis_off()
@@ -159,7 +145,7 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, wri
                         mean_val_kl_term += criterion.last_loss['kl_term']
                         mean_val_kl += infodict['kls']
                     
-                    val_minibatches = len(val_dataloader)
+
                     mean_val_loss /= val_minibatches
                     mean_val_reconstruction_term /= val_minibatches
                     mean_val_kl_term /= val_minibatches
@@ -173,7 +159,7 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, wri
                     'kl_term': mean_val_kl_term,
                     'kls': mean_val_kl
                 }
-                record_history(e,idx, loss_dict, type='val')
+                record_history(idx, loss_dict, type='val')
         
         
         # Report Epoch Completion
@@ -194,34 +180,3 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, wri
 
 
     return history
-
-def save_validation_images(images, masks, epoch, save_dir, prefix):
-    """
-    Save validation images to disk.
-    
-    Args:
-        images: Input images [B, C, H, W]
-        masks: Segmentation masks [B, 1, H, W]
-        epoch: Current epoch
-        save_dir: Directory to save images
-        prefix: Prefix for saved files
-    """
-    os.makedirs(save_dir, exist_ok=True)
-    img_grid = make_grid(images.cpu(), nrow=4, normalize=True)
-    mask_grid = make_grid(masks.cpu(), nrow=4, normalize=True)
-    
-    save_image(img_grid, f"{save_dir}/{prefix}_images_epoch_{epoch}.png")
-    save_image(mask_grid, f"{save_dir}/{prefix}_predictions_epoch_{epoch}.png")
-    
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
-    axes[0].imshow(img_grid.permute(1, 2, 0).cpu().numpy())
-    axes[0].set_title("Input Images")
-    axes[0].axis('off')
-    
-    axes[1].imshow(mask_grid.permute(1, 2, 0).cpu().numpy())
-    axes[1].set_title("Masks")
-    axes[1].axis('off')
-    
-    plt.tight_layout()
-    plt.savefig(f"{save_dir}/{prefix}_combined_epoch_{epoch}.png", dpi=600, bbox_inches='tight')
-    plt.close(fig)
