@@ -12,7 +12,7 @@ from datagen import DataGeneratorDataset
 
 
 from model import *
-from new_train import *
+from analy_train import *
 
 from torch.utils.tensorboard import SummaryWriter
 
