@@ -171,8 +171,8 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, wri
         
         # Save Model and Loss
         if (e+1) % args.save_period == 0 and (e+1) != args.epochs:
-            torch.save(model, '{}/{}/model{}.pth'.format(args.output_dir, args.stamp, e+1))
-            torch.save(criterion, '{}/{}/loss{}.pth'.format(args.output_dir, args.stamp, e+1))
+            torch.save(model.state_dict(), '{}/{}/model{}.pth'.format(args.output_dir, args.stamp, e+1))
+            #torch.save(criterion, '{}/{}/loss{}.pth'.format(args.output_dir, args.stamp, e+1))
         
         # Step Learning Rate
         writer.add_scalar('Learning Rate', lr_scheduler.get_last_lr()[0], e)

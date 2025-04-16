@@ -12,17 +12,16 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, dev
     save_dir = os.path.join(args.output_dir, args.stamp)
     os.makedirs(save_dir, exist_ok=True)
 
-    # Obtain a fixed validation batch (here, first 5 images) for later evaluation.
-    # We assume that the dataloader returns (images, truths) where truths is a tuple and the first element is the mask.
+    
     val_images, val_truths = next(iter(val_dataloader))
     fixed_val_images = val_images[:5]      # shape: (5, C, H, W)
-    fixed_val_truths = val_truths[0][:5]     # shape: (5, C, H, W)
+    fixed_val_truths = val_truths[1][:5]     # shape: (5, C, H, W)
 
     # Optionally, save the original validation images and ground truth grids.
-    save_image(make_grid(fixed_val_images, nrow=5, pad_value=fixed_val_images.min().item()),
-               os.path.join(save_dir, "val_images_grid.png"))
-    save_image(make_grid(fixed_val_truths, nrow=5, pad_value=fixed_val_truths.min().item()),
-               os.path.join(save_dir, "val_truths_grid.png"))
+    # save_image(make_grid(fixed_val_images, nrow=5, pad_value=fixed_val_images.min().item()),
+    #            os.path.join(save_dir, "val_images_grid.png"))
+    # save_image(make_grid(fixed_val_truths, nrow=5, pad_value=fixed_val_truths.min().item()),
+    #            os.path.join(save_dir, "val_truths_grid.png"))
 
     if start_time is None:
         start_time = time.time()
@@ -33,9 +32,8 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, dev
             idx = epoch * len(dataloader) + mb + 1
             model.train()
             optimizer.zero_grad()
-            images, truths = images.to(device), truths[0].to(device)
-            #print(f"Batch {idx}: images shape: {images.shape}, truths shape: {truths.shape}")
-            # Forward pass: for training we use one prediction (first sample)
+            images, truths = images.to(device), truths[1].to(device)
+    
             preds, infodicts = model(images, truths)
             preds, infodict = preds[:,0], infodicts[0]
             
@@ -52,33 +50,39 @@ def train_model(args, model, dataloader, criterion, optimizer, lr_scheduler, dev
         # End of epoch: run inference on fixed validation images with times=10 to sample prediction diversity.
         model.eval()
         with torch.no_grad():
-            # Generate 10 predictions per fixed validation image
-            # This returns a tensor of shape (5, 10, H, W) if first_channel_only=True.
+            
             preds, _ = model(fixed_val_images.to(device), y=None, times=10)
-            # Apply sigmoid if the model outputs logits.
-            #preds = torch.sigmoid(preds)
-            print(f"Predictions shape: {preds.shape}")  # Should be (5, 10, H, W)
-            # For each of the 5 images, build and save a grid:
+            
+            
             for i in range(fixed_val_images.size(0)):
                 # Get original input and ground truth (move to CPU for saving)
                 orig = fixed_val_images[i]
                 gt = fixed_val_truths[i]
-                # Get the 10 prediction samples for this image.
-                # preds[i] has shape (10, H, W); if needed, add channel dimension.
+                
                 sample_preds = preds[i].cpu()  # shape: (10, H, W)
+                print("Before sigmoid:", sample_preds.min(), sample_preds.max())
+                sample_preds = torch.sigmoid(sample_preds)  # Apply sigmoid if needed
+                # Normalize to [0, 1] for visualization
+                print("After sigmoid:", sample_preds.min(), sample_preds.max())
+
+                sample_preds = (sample_preds > 0.5).float()  # Apply threshold if needed
                 if sample_preds.dim() == 3:
                     sample_preds = sample_preds.unsqueeze(1)  # shape: (10, 1, H, W)
                 
-                print((orig.is_cuda, gt.is_cuda, sample_preds.is_cuda))
-                # Build a row with 12 images: [Original, GT, 10 predictions]
-                row_images = [orig, gt] + [sample_preds[j] for j in range(sample_preds.size(0))]
-                row_tensor = torch.stack(row_images, dim=0)
-                # Arrange them horizontally
-                grid = make_grid(row_tensor, nrow=2, pad_value=0)
-                grid_save_path = os.path.join(save_dir, f"epoch_{epoch+1}_val_img_{i+1}.png")
-                save_image(grid, grid_save_path)
-                print(f"Saved grid for validation image {i+1} of epoch {epoch+1} at {grid_save_path}")
-
+                print(sample_preds.min(), sample_preds.max())
+                # row_images = [orig, gt] + [sample_preds[j] for j in range(sample_preds.size(0))]
+                # row_tensor = torch.stack(row_images, dim=0)
+                
+                # grid = make_grid(row_tensor, nrow=2, pad_value=0)
+                # grid_save_path = os.path.join(save_dir, f"epoch_{epoch+1}_val_img_{i+1}.png")
+                # save_image(grid, grid_save_path)
+                
+        
+        if epoch % 10 == 0:
+            # Save model checkpoint every 10 epochs
+            checkpoint_path = os.path.join(save_dir, f"checkpoint_epoch_{epoch+1}.pth")
+            torch.save(model.state_dict(), checkpoint_path)
+            print(f"Model checkpoint saved at {checkpoint_path}")
         # Step learning rate scheduler
         lr_scheduler.step()
         epoch_time = (time.time() - start_time) / 60

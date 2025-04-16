@@ -5,14 +5,14 @@ import time
 import socket
 import tracemalloc
 import os
-from torch.optim.lr_scheduler import CosineAnnealingLR 
+
 import numpy as np
 from torch.utils.data import DataLoader
 from datagen import DataGeneratorDataset
 
 
 from model import *
-from train import *
+from combine_train import *
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -56,8 +56,7 @@ parser.add_argument("--latent_locks", type=int, nargs='+',default= [None,None,No
 # Loss
 
 parser.add_argument("--rec_type", help="Reconstruction Loss Type", default="mse")
-parser.add_argument("--loss_type", default="enhanced_elbo", choices=["ELBO", "enhanced_elbo", "GECO"], 
-                    help="Loss function type (ELBO, enhanced_elbo, or GECO)")
+parser.add_argument("--loss_type", default="ELBO", help="Loss Function Type (ELBO/GECO)")
 
 parser.add_argument("--beta", type=float, default=1.0, help="(If Using ELBO Loss) Beta Parameter")
 parser.add_argument("--beta_asc_steps", type=int, help="(If Using ELBO Loss with Beta Scheduler) Number of Ascending Steps (If Not Provided, Beta Will be Constant)")
@@ -88,7 +87,7 @@ parser.add_argument("--scheduler_gamma", type=float, default=0.1, help="Learning
 
 parser.add_argument("--save_period", type=int, default=128, help="Number of Epochs Between Saving the Model")
 
-parser.add_argument("--output_dir", default="dendrite", help="Output Directory")
+parser.add_argument("--output_dir", default="combine", help="Output Directory")
 parser.add_argument("--comment", default="", help="Comment to be Included in the Stamp")
 
 
@@ -242,25 +241,20 @@ else:
 
 ## Total Loss
 if args.loss_type.lower() == 'elbo':
-    # (Optional: set up beta scheduler if using ELBO)
-    beta_scheduler = BetaConstant(args.beta if hasattr(args, 'beta') else 1.0)
+    if args.beta_asc_steps is None:
+        beta_scheduler = BetaConstant(args.beta)
+    else:
+        beta_scheduler = BetaLinearScheduler(ascending_steps=args.beta_asc_steps, constant_steps=args.beta_cons_steps, max_beta=args.beta, saturation_step=args.beta_saturation_step)
     criterion = ELBOLoss(reconstruction_loss=reconstruction_loss, beta=beta_scheduler).to(device)
-elif args.loss_type.lower() == 'enhanced_elbo':
-    # Set up beta scheduler
-    beta_scheduler = BetaConstant(args.beta if hasattr(args, 'beta') else 0.1)
-    # Use the enhanced ELBO loss with KL balancing
-    criterion = EnhancedELBOLoss(
-        reconstruction_loss=reconstruction_loss, 
-        n_latents=args.latent_num,
-        beta=beta_scheduler, 
-        conv_dim=2,
-        kl_balancing=True
-    ).to(device)
+
 elif args.loss_type.lower() == 'geco':
-    criterion = GECOLoss(reconstruction_loss=reconstruction_loss, kappa=args.kappa, decay=args.decay,
-                          update_rate=args.update_rate, device=device, conv_dim=2).to(device)
+    kappa = args.kappa
+    if args.kappa_px is True:
+        kappa *= args.pixels
+    criterion = GECOLoss(reconstruction_loss=reconstruction_loss, kappa=kappa, decay=args.decay, update_rate=args.update_rate, device=device).to(device)
+
 else:
-    print("Invalid loss type. Exiting...")
+    print('Invalid loss type, exiting...')
     exit()
 
 
@@ -282,29 +276,13 @@ else:
 # Set LR Scheduler
 if args.scheduler_type == 'cons':
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.epochs)
+
 elif args.scheduler_type == 'step':
-    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.scheduler_step_size,
-                                             gamma=args.scheduler_gamma)
+    lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.scheduler_step_size, gamma=args.scheduler_gamma)
+
 elif args.scheduler_type == 'milestones':
-    lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.scheduler_milestones,
-                                                  gamma=args.scheduler_gamma)
-elif args.scheduler_type == 'cosine':
-    # Cosine annealing with warmup
-    warmup_epochs = args.scheduler_warmup_epochs if hasattr(args, 'scheduler_warmup_epochs') else 0
-    
-    if warmup_epochs > 0:
-        # Linear warmup for warmup_epochs, then cosine decay for remaining epochs
-        def lr_lambda(epoch):
-            if epoch < warmup_epochs:
-                return float(epoch) / float(max(1, warmup_epochs))
-            else:
-                # Cosine decay from 1. to 0.
-                return 0.5 * (1. + math.cos(math.pi * (epoch - warmup_epochs) / (args.epochs - warmup_epochs)))
-        
-        lr_scheduler = optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-    else:
-        # Standard cosine annealing
-        lr_scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    lr_scheduler = optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.scheduler_milestones, gamma=args.scheduler_gamma)
+
 
 # Save Args
 argsdict = vars(args)
@@ -319,7 +297,7 @@ with open('{}/{}/args.txt'.format(args.output_dir, stamp), 'w') as f:
 start = time.time()
 
 # Train the Model
-history = train_model(args, model, train_loader, criterion, optimizer, lr_scheduler, writer, device, val_loader, start)
+history = train_model(args, model, train_loader, criterion, optimizer, lr_scheduler, device, val_loader, start)
 
 
 # End Timing & Report Training Time

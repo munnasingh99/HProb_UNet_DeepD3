@@ -2,16 +2,12 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.nn import MSELoss
-import math
-import torch.nn.functional as F
 
 class ConvBlock(nn.Module):
     def __init__(self, in_ch, out_ch, activation="ReLU", kernel_size=3, dilation=1, padding_mode='circular', conv_class=nn.Conv2d):
         super().__init__()
         self.conv1 = conv_class(in_channels=in_ch, out_channels=out_ch, kernel_size=kernel_size, dilation=dilation, padding='same', padding_mode=padding_mode)
         self.conv2 = conv_class(in_channels=out_ch, out_channels=out_ch, kernel_size=kernel_size, dilation=dilation, padding='same', padding_mode=padding_mode)
-
-        # Use a proper if/elif chain for activation selection.
         act = activation.lower()
         if act == "relu":
             self.activation = nn.ReLU()
@@ -29,18 +25,14 @@ class ConvBlock(nn.Module):
         f = self.activation(self.conv2(f))
         return f
 
-
 class PreResBlock(nn.Module):
     def __init__(self, in_ch, out_ch=None, activation="ReLU", kernel_size=3, dilation=1, padding_mode='circular', conv_class=nn.Conv2d):
         super().__init__()
-        
         if out_ch is None:
             out_ch = in_ch
             self.skipconv = nn.Identity()
         else:
             self.skipconv = conv_class(in_channels=in_ch, out_channels=out_ch, kernel_size=1)
-
-        # Use a proper if/elif chain for activation selection.
         act = activation.lower()
         if act == "relu":
             self.activation = nn.ReLU()
@@ -52,9 +44,7 @@ class PreResBlock(nn.Module):
             self.activation = nn.Identity()
         else:
             raise ValueError("Unsupported activation type: " + activation)
-
         med_ch = in_ch // 2 if in_ch > 1 else 1
-
         self.bn1 = nn.BatchNorm2d(num_features=in_ch) if conv_class == nn.Conv2d else nn.BatchNorm1d(num_features=in_ch)
         self.bn2 = nn.BatchNorm2d(num_features=med_ch) if conv_class == nn.Conv2d else nn.BatchNorm1d(num_features=med_ch)
         self.conv1 = conv_class(in_channels=in_ch, out_channels=med_ch, kernel_size=kernel_size, dilation=dilation, padding='same', padding_mode=padding_mode)
@@ -84,7 +74,6 @@ class ScaleBlock(nn.Module):
         f = self.last_preres_block(f)
         return f
 
-
 class Encoder(nn.Module):
     def __init__(self, chs, activation="ReLU", scale_depth=1, kernel_size=None, dilation=None, padding_mode='circular', conv_class=nn.Conv2d):
         super().__init__()
@@ -104,7 +93,6 @@ class Encoder(nn.Module):
         encoder_feature_maps.reverse()
         return encoder_feature_maps
 
-
 class Decoder(nn.Module):
     def __init__(self, chs, latent_num=0, activation="ReLU", scale_depth=1, kernel_size=None, dilation=None, padding_mode='circular', latent_channels=None, latent_locks=None, conv_class=nn.Conv2d):
         super().__init__()
@@ -112,10 +100,7 @@ class Decoder(nn.Module):
         self.latent_num = latent_num
         self.latent_channels = latent_channels
         self.latent_locks = latent_locks
-
         self.upsampling = nn.Upsample(scale_factor=2, mode='nearest')
-
-        # Prior Net
         self.latent_mean_convs = nn.ModuleList(
             [conv_class(in_channels=chs[i], out_channels=latent_channels[i], kernel_size=1) for i in range(latent_num)]
         )
@@ -130,8 +115,6 @@ class Decoder(nn.Module):
                         kernel_size[i+1], dilation[i+1], padding_mode=padding_mode, conv_class=conv_class)
              for i in range(self.depth)]
         )
-
-        # Posterior Net
         self.post_latent_mean_convs = nn.ModuleList(
             [conv_class(in_channels=chs[i], out_channels=latent_channels[i], kernel_size=1) for i in range(latent_num)]
         )
@@ -236,7 +219,6 @@ class Decoder(nn.Module):
             }
             return f, infodict
 
-
 class HPUNet(nn.Module):
     def __init__(self, in_ch, chs, latent_num=0, out_ch=1, activation="ReLU", scale_depth=None, kernel_size=None, dilation=None, padding_mode='circular', latent_channels=None, latent_locks=None, conv_dim=2):
         super().__init__()
@@ -257,12 +239,13 @@ class HPUNet(nn.Module):
         self.encoder_head = ConvBlock(in_ch, chs[0], activation, kernel_size[0], dilation[0], padding_mode='zeros', conv_class=self.conv_class)
         self.encoder = Encoder(chs, activation, scale_depth, kernel_size, dilation, padding_mode='zeros', conv_class=self.conv_class)
         self.decoder = Decoder(list(reversed(chs)), latent_num, activation, list(reversed(scale_depth)), list(reversed(kernel_size)), list(reversed(dilation)), padding_mode=padding_mode, latent_channels=latent_channels, latent_locks=latent_locks, conv_class=self.conv_class)
-        # Use 'linear' activation for the final decoder head to output raw logits for BCEWithLogitsLoss.
+        # Use 'linear' activation for the final decoder head to output raw logits.
         self.decoder_head = ScaleBlock(decoder_head_in_channels, out_ch, "linear", scale_depth[0], kernel_size[0], dilation[0], padding_mode=padding_mode, conv_class=self.conv_class)
         self.posterior_encoder_head = ConvBlock(in_ch+1, chs[0], activation, kernel_size[0], dilation[0], padding_mode='zeros', conv_class=self.conv_class)
         self.posterior_encoder = Encoder(chs, activation, scale_depth, kernel_size, dilation, padding_mode='zeros', conv_class=self.conv_class)
 
-    def forward(self, x, y=None, times=1, first_channel_only=True, insert_from_postnet=False):
+    def forward(self, x, y=None, times=1, first_channel_only=False, insert_from_postnet=False):
+        # Note: set first_channel_only to False to get the full output (all channels).
         f = self.encoder_head(x)
         f = self.encoder(f)
         outs, infodicts = [], []
@@ -281,19 +264,17 @@ class HPUNet(nn.Module):
                 outs.append(o)
                 infodicts.append(infodict)
         output = torch.stack(outs, dim=1)
-        if first_channel_only is True:
+        if first_channel_only:
             output = output[:, :, 0]
         return output, infodicts
 
-
-# Optimization
+# The rest of the file (Beta schedulers, Loss wrappers) remains unchanged.
 class BetaConstant(nn.Module):
     def __init__(self, beta):
         super().__init__()
         self.beta = beta
     def step(self):
         return
-
 
 class BetaLinearScheduler(nn.Module):
     def __init__(self, ascending_steps, constant_steps=0, max_beta=1.0, saturation_step=None):
@@ -325,8 +306,6 @@ class BetaLinearScheduler(nn.Module):
             self.beta = self.max_beta
         return
 
-
-# Loss Functions & Utils
 class MSELossWrapper(MSELoss):
     def __init__(self):
         super().__init__(reduction='none')
@@ -339,7 +318,6 @@ class MSELossWrapper(MSELoss):
 class BCELossWrapper(nn.Module):
     def __init__(self):
         super().__init__()
-        # BCEWithLogitsLoss applies sigmoid internally.
         self.loss_fn = nn.BCEWithLogitsLoss(reduction='none')
         self.last_loss = None
     def forward(self, yhat, y, **kwargs):
@@ -412,68 +390,4 @@ class GECOLoss(nn.Module):
         if self.training is True:
             with torch.no_grad():
                 self.log_lamda += self.update_rate * kwargs['lr'] * rec_constraint_ma
-        return loss
-
-
-class KLBalancer(nn.Module):
-    """Balances KL terms from different latent spaces"""
-    def __init__(self, n_latents):
-        super().__init__()
-        self.n_latents = n_latents
-        # Initialize log_alphas with higher values for lower latent spaces
-        # This gives more importance to latent variables earlier in the network
-        self.log_alphas = nn.Parameter(torch.zeros(n_latents))
-        self.reset_parameters()
-    
-    def reset_parameters(self):
-        # Initialize with decreasing weights for deeper latents
-        for i in range(self.n_latents):
-            self.log_alphas.data[i] = math.log(1.0 / (i + 1))
-    
-    def forward(self, kls):
-        """
-        Apply balancing to KL terms
-        Args:
-            kls: List of KL divergence terms for each latent scale
-        """
-        alphas = F.softmax(self.log_alphas, dim=0)
-        return sum(a * kl for a, kl in zip(alphas, kls))
-
-
-# Enhanced ELBO loss with KL balancing - add this to model.py
-class EnhancedELBOLoss(nn.Module):
-    def __init__(self, reconstruction_loss, n_latents, beta=None, conv_dim=2, kl_balancing=True):
-        super().__init__()
-        self.conv_dim = conv_dim
-        self.reconstruction_loss = reconstruction_loss
-        
-        if beta is None:
-            beta = BetaConstant(1.0)
-        self.beta_scheduler = beta
-        
-        self.kl_balancing = kl_balancing
-        if kl_balancing:
-            self.kl_balancer = KLBalancer(n_latents)
-            
-        self.last_loss = None
- 
-    def forward(self, yhat, y, kls, **kwargs):
-        rec_loss_before_mean = self.reconstruction_loss(yhat, y, **kwargs).sum(dim=tuple(range(1, self.conv_dim)))
-        rec_term = rec_loss_before_mean.mean()
-        
-        if self.kl_balancing:
-            kl_term = self.beta_scheduler.beta * self.kl_balancer(kls)
-        else:
-            kl_term = self.beta_scheduler.beta * torch.sum(kls)
-            
-        loss = rec_term + kl_term
-
-        self.last_loss = {
-            'reconstruction_loss_before_mean': rec_loss_before_mean,
-            'reconstruction_term': rec_term,
-            'kl_term': kl_term,
-            'loss': loss,
-            'reconstruction_internal': self.reconstruction_loss.last_loss
-        }
-
         return loss

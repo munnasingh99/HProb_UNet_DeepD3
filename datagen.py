@@ -95,19 +95,34 @@ class DataGeneratorDataset(Dataset):
         return image, (dendrite, spines)
 
     def _get_augmenter(self):
-        """Defines used augmentations"""
+        """Defines an enhanced set of augmentations using Albumentations"""
         aug = A.Compose([
-            A.RandomBrightnessContrast(p=0.25),    
-            A.Rotate(limit=10, border_mode=cv2.BORDER_REFLECT, p=0.5),
+            # Existing augmentations
+            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.5),
+            A.Rotate(limit=15, border_mode=cv2.BORDER_REFLECT, p=0.5),
             A.RandomRotate90(p=0.5),
             A.HorizontalFlip(p=0.5),
             A.VerticalFlip(p=0.5),
-            A.Blur(p=0.2),
-            A.GaussNoise(p=0.5)], p=1,
-            additional_targets={
-                'mask1': 'mask',
-                'mask2': 'mask'
-            })
+            A.Blur(blur_limit=3, p=0.3),
+            A.GaussNoise(var_limit=(5.0, 20.0), p=0.5),
+            
+            # Additional augmentations for better convergence
+            A.GaussianBlur(blur_limit=(3, 5), p=0.2),  # Different from regular Blur
+            A.ElasticTransform(alpha=1, sigma=50, alpha_affine=20, p=0.2),  # Good for medical imaging
+            A.GridDistortion(num_steps=5, distort_limit=0.2, p=0.2),  # Another geometric distortion
+            A.OpticalDistortion(distort_limit=0.2, shift_limit=0.05, p=0.2),  # Simulates lens effects
+            #A.CLAHE(clip_limit=2.0, tile_grid_size=(8, 8), p=0.2),  # Contrast Limited Adaptive Histogram Equalization
+            A.RandomGamma(gamma_limit=(80, 120), p=0.3),  # Gamma correction (80-120%)
+            #A.ImageCompression(quality_lower=85, quality_upper=100, p=0.2),  # Simulates JPEG compression artifacts
+            A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, p=0.3),  # Additional brightness/contrast
+            
+            # Cutout/CoarseDropout - randomly erases rectangles from the image
+            A.CoarseDropout(max_holes=8, max_height=8, max_width=8, fill_value=0, p=0.2),
+        ], p=1.0,  # p=1.0 means at least one augmentation will be applied
+        additional_targets={
+            'mask1': 'mask',
+            'mask2': 'mask'
+        })
         return aug
 
     def getSample(self, squeeze=True):
